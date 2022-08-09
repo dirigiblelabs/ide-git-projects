@@ -9,21 +9,27 @@
  * SPDX-FileCopyrightText: 2010-2022 SAP SE or an SAP affiliate company and Eclipse Dirigible contributors
  * SPDX-License-Identifier: EPL-2.0
  */
-let gitProjectsView = angular.module('gitProjects', ['ideUI', 'ideView', 'ideWorkspace', 'idePublisher', 'ideTransport']);
+let gitProjectsView = angular.module('gitProjects', ['ideUI', 'ideView', 'ideWorkspace', 'idePublisher', 'ideGit']);
 
-gitProjectsView.controller('ProjectsViewController', [
+gitProjectsView.controller('GitProjectsViewController', [
     '$scope',
     'messageHub',
     'workspaceApi',
     'publisherApi',
-    'transportApi',
+    'gitApi',
     function (
         $scope,
         messageHub,
         workspaceApi,
         publisherApi,
-        transportApi,
+        gitApi,
     ) {
+        $scope.selectedRepository = '';
+        $scope.credentials = {
+            username: '',
+            email: '',
+            password: '',
+        };
         $scope.searchVisible = false;
         $scope.searchField = { text: '' };
         $scope.workspaceNames = [];
@@ -47,6 +53,7 @@ gitProjectsView.controller('ProjectsViewController', [
         $scope.jstreeConfig = {
             core: {
                 check_callback: true,
+                multiple: false,
                 themes: {
                     name: "fiori",
                     variant: "compact",
@@ -69,7 +76,7 @@ gitProjectsView.controller('ProjectsViewController', [
                     return true;
                 },
             },
-            state: { key: 'ide-projects' },
+            state: { key: 'ide-git-projects' },
             types: {
                 '#': {
                     valid_children: ["project"]
@@ -103,28 +110,10 @@ gitProjectsView.controller('ProjectsViewController', [
                     name: data.node.text,
                     path: data.node.data.path,
                     contentType: data.node.data.contentType,
-                    workspace: data.node.data.workspace,
+                    workspace: $scope.selectedWorkspace.name,
                 });
             }
         });
-
-        $scope.jstreeWidget.on('dblclick.jstree', function (event) {
-            let node = $scope.jstreeWidget.jstree(true).get_node(event.target);
-            if (node.type === 'file') {
-                showDiff(node);
-            }
-        });
-
-        function getProjectNode(parents) {
-            for (let i = 0; i < parents.length; i++) {
-                if (parents[i] !== '#') {
-                    let parent = $scope.jstreeWidget.jstree(true).get_node(parents[i]);
-                    if (parent.type === 'project') {
-                        return parent;
-                    }
-                }
-            }
-        }
 
         $scope.contextMenuContent = function (element) {
             if ($scope.jstreeWidget[0].contains(element)) {
@@ -134,17 +123,75 @@ gitProjectsView.controller('ProjectsViewController', [
                     if (closest) id = closest.id;
                     else return {
                         callbackTopic: "git-projects.tree.contextmenu",
-                        items: []
+                        items: [{
+                            id: "refresh",
+                            label: "Refresh",
+                            icon: "sap-icon--refresh",
+                        },
+                        {
+                            id: "clone",
+                            label: "Clone",
+                            icon: "sap-icon--duplicate",
+                            divider: true,
+                        }]
                     }
                 } else {
                     id = element.id;
                 }
                 if (id) {
                     let node = $scope.jstreeWidget.jstree(true).get_node(id);
+                    console.log(node);
                     if (node.type === 'project') {
-                    } else if (node.type === "folder") {
-                    } else if (node.type === "file") {
+                        if (node.data.git) {
+                            return {
+                                callbackTopic: 'git-projects.tree.contextmenu',
+                                items: [{
+                                    id: "pull",
+                                    label: "Pull",
+                                    icon: "sap-icon--download",
+                                    data: node.text,
+                                },
+                                {
+                                    id: "push",
+                                    label: "Push",
+                                    icon: "sap-icon--upload",
+                                    data: node.text,
+                                },
+                                {
+                                    id: "reset",
+                                    label: "Reset",
+                                    icon: "sap-icon--reset",
+                                    data: node.text,
+                                },
+                                {
+                                    id: "importProjects",
+                                    label: "Import Project(s)",
+                                    divider: true,
+                                    icon: "sap-icon--sys-add",
+                                    data: node.text,
+                                },
+                                {
+                                    id: "delete",
+                                    label: "Delete",
+                                    divider: true,
+                                    icon: "sap-icon--delete",
+                                    data: node,
+                                }]
+                            };
+                        } else {
+                            return {
+                                callbackTopic: 'git-projects.tree.contextmenu',
+                                items: [{
+                                    id: "share",
+                                    label: "Share",
+                                    icon: "sap-icon--share",
+                                    data: node.text,
+                                }]
+                            };
+                        }
                     }
+                    // else if (node.type === "folder") {
+                    // } else if (node.type === "file") {}
                 }
                 return;
             } else return;
@@ -169,28 +216,26 @@ gitProjectsView.controller('ProjectsViewController', [
             });
         };
 
-        $scope.reloadWorkspace = function (setConfig = false) {
+        $scope.reloadProjects = function (setConfig = false) {
             $scope.projects.length = 0;
-            workspaceApi.load($scope.selectedWorkspace.name).then(function (response) {
+            gitApi.listProjects($scope.selectedWorkspace.name).then(function (response) {
                 if (response.status === 200) {
-                    for (let i = 0; i < response.data.projects.length; i++) {
+                    for (let i = 0; i < response.data.length; i++) {
                         let project = {
-                            text: response.data.projects[i].name,
-                            type: response.data.projects[i].type,
+                            text: response.data[i].name,
+                            type: response.data[i].type,
                             data: {
-                                git: response.data.projects[i].git,
-                                gitName: response.data.projects[i].gitName,
-                                path: response.data.projects[i].path.substring(response.data.path.length, response.data.projects[i].path.length), // Back-end should not include workspase name in path
-                                workspace: response.data.name,
+                                git: response.data[i].git,
+                                path: response.data[i].path,
                             },
-                            li_attr: { git: response.data.projects[i].git },
+                            li_attr: { git: response.data[i].git },
                         };
-                        if (response.data.projects[i].folders && response.data.projects[i].files) {
-                            project['children'] = processChildren(response.data.projects[i].folders.concat(response.data.projects[i].files));
-                        } else if (response.data.projects[i].folders) {
-                            project['children'] = processChildren(response.data.projects[i].folders);
-                        } else if (response.data.projects[i].files) {
-                            project['children'] = processChildren(response.data.projects[i].files);
+                        if (response.data[i].folders && response.data[i].files) {
+                            project['children'] = processChildren(response.data[i].folders.concat(response.data[i].files));
+                        } else if (response.data[i].folders) {
+                            project['children'] = processChildren(response.data[i].folders);
+                        } else if (response.data[i].files) {
+                            project['children'] = processChildren(response.data[i].files);
                         }
                         $scope.projects.push(project);
                     }
@@ -202,58 +247,137 @@ gitProjectsView.controller('ProjectsViewController', [
             });
         };
 
-        $scope.publishAll = function () {
-            messageHub.showStatusBusy("Publishing projects...");
-            publisherApi.publish(`/${$scope.selectedWorkspace.name}/*`).then(function (response) {
-                messageHub.hideStatusBusy();
-                if (response.status !== 201)
-                    messageHub.setStatusError(`Unable to publish projects in '${$scope.selectedWorkspace.name}'`);
-                else messageHub.setStatusMessage(`Published all projects in '${$scope.selectedWorkspace.name}'`);
-            });
-        };
-
-        $scope.unpublishAll = function () {
-            messageHub.showStatusBusy("Unpublishing projects...");
-            publisherApi.unpublish(`/${$scope.selectedWorkspace.name}/*`).then(function (response) {
-                messageHub.hideStatusBusy();
-                if (response.status !== 201)
-                    messageHub.setStatusError(`Unable to unpublish projects in '${$scope.selectedWorkspace.name}'`);
-                else messageHub.setStatusMessage(`Unpublished all projects in '${$scope.selectedWorkspace.name}'`);
-            });
-        };
-
-        $scope.publish = function (path, workspace, callback) {
-            messageHub.showStatusBusy(`Publishing '${path}'...`);
-            publisherApi.publish(path, workspace).then(function (response) {
-                messageHub.hideStatusBusy();
-                if (response.status !== 201) {
-                    messageHub.setStatusError(`Unable to publish '${path}'`);
-                } else {
-                    messageHub.setStatusMessage(`Published '${path}'`);
-                    if (callback) callback();
-                }
-            });
-        };
-
-        $scope.unpublish = function (path, workspace, callback) {
-            messageHub.showStatusBusy(`Unpublishing '${path}'...`);
-            publisherApi.unpublish(path, workspace).then(function (response) {
-                messageHub.hideStatusBusy();
-                if (response.status !== 201) {
-                    messageHub.setStatusError(`Unable to unpublish '${path}'`);
-                } else {
-                    messageHub.setStatusMessage(`Unpublished '${path}'`);
-                    if (callback) callback();
-                }
-            });
-        };
-
         $scope.switchWorkspace = function (workspace) {
             if ($scope.selectedWorkspace.name !== workspace) {
                 $scope.selectedWorkspace.name = workspace;
                 saveSelectedWorkspace();
-                $scope.reloadWorkspace();
+                $scope.reloadProjects();
             }
+        };
+
+        $scope.cloneDialog = function () {
+            messageHub.showFormDialog(
+                'cloneGitProjectForm',
+                'Clone project',
+                [{
+                    id: "curli",
+                    type: "input",
+                    label: "HTTPS Url",
+                    inputRules: {
+                        excluded: [],
+                        patterns: ['^https?://'],
+                    },
+                    required: true,
+                    placeholder: "https://github.com/myspace/myproject.git",
+                },
+                {
+                    id: "cuni",
+                    type: "input",
+                    label: "Username",
+                    value: $scope.credentials.username,
+                },
+                {
+                    id: "cpwi",
+                    type: "input",
+                    inputType: 'password',
+                    label: "Password",
+                    value: $scope.credentials.password,
+                },
+                {
+                    id: "cbi",
+                    type: "input",
+                    label: "Branch",
+                    placeholder: 'main',
+                }],
+                [{
+                    id: 'b1',
+                    type: 'emphasized',
+                    label: 'Clone',
+                    whenValid: true,
+                },
+                {
+                    id: 'b2',
+                    type: 'transparent',
+                    label: 'Cancel',
+                }],
+                'git-projects.clone.repository',
+                'Cloning...',
+            );
+        };
+
+        $scope.pushDialog = function (multiple = false) {
+            messageHub.showFormDialog(
+                'pushGitProjectForm',
+                (multiple ? 'Push all repositories' : `Push '${$scope.selectedRepository}'`),
+                [{
+                    id: "puni",
+                    type: "input",
+                    label: "Username",
+                    required: true,
+                    value: $scope.credentials.username,
+                },
+                {
+                    id: "pei",
+                    type: "input",
+                    label: "Email",
+                    required: true,
+                    value: $scope.credentials.email,
+                },
+                {
+                    id: "ppwi",
+                    type: "input",
+                    inputType: 'password',
+                    label: "Password or Token",
+                    required: true,
+                    value: $scope.credentials.password,
+                }],
+                [{
+                    id: 'b1',
+                    type: 'emphasized',
+                    label: 'Push',
+                    whenValid: true,
+                },
+                {
+                    id: 'b2',
+                    type: 'transparent',
+                    label: 'Cancel',
+                }],
+                (multiple ? 'git-projects.push.repository.all' : 'git-projects.push.repository'),
+                'Pushing...',
+            );
+        };
+
+        $scope.pullDialog = function (multiple = false) {
+            messageHub.showFormDialog(
+                'pullGitProjectForm',
+                (multiple ? 'Pull all repositories' : `Pull '${$scope.selectedRepository}'`),
+                [{
+                    id: "puni",
+                    type: "input",
+                    label: "Username",
+                    value: $scope.credentials.username,
+                },
+                {
+                    id: "ppwi",
+                    type: "input",
+                    inputType: 'password',
+                    label: "Password or Token",
+                    value: $scope.credentials.password,
+                }],
+                [{
+                    id: 'b1',
+                    type: 'emphasized',
+                    label: 'Pull',
+                    whenValid: true,
+                },
+                {
+                    id: 'b2',
+                    type: 'transparent',
+                    label: 'Cancel',
+                }],
+                (multiple ? 'git-projects.pull.repository.all' : 'git-projects.pull.repository'),
+                'Pulling...',
+            );
         };
 
         let to = 0;
@@ -263,14 +387,6 @@ gitProjectsView.controller('ProjectsViewController', [
                 $scope.jstreeWidget.jstree(true).search($scope.searchField.text);
             }, 250);
         };
-
-        function showSpinner(parent) {
-            return $scope.jstreeWidget.jstree(true).create_node(parent, $scope.spinnerObj, 0);
-        }
-
-        function hideSpinner(spinnerId) {
-            $scope.jstreeWidget.jstree(true).delete_node($scope.jstreeWidget.jstree(true).get_node(spinnerId));
-        }
 
         function processChildren(children) {
             let treeChildren = [];
@@ -282,8 +398,7 @@ gitProjectsView.controller('ProjectsViewController', [
                         status: children[i].status
                     },
                     data: {
-                        path: children[i].path.substring($scope.selectedWorkspace.name.length + 1, children[i].path.length), // Back-end should not include workspase name in path
-                        workspace: $scope.selectedWorkspace.name,
+                        path: children[i].path,
                     }
                 };
                 if (children[i].type === 'file') {
@@ -328,24 +443,13 @@ gitProjectsView.controller('ProjectsViewController', [
             return icon;
         }
 
-        function showDiff(node) {
-            let parent = node;
-            let extraArgs;
-            for (let i = 0; i < node.parents.length - 1; i++) {
-                parent = $scope.jstreeWidget.jstree(true).get_node(parent.parent);
-            }
-            if (parent.data.git) {
-                extraArgs = { gitName: parent.data.gitName };
-            }
-        }
-
         function saveSelectedWorkspace() {
             localStorage.setItem('DIRIGIBLE.workspace', JSON.stringify($scope.selectedWorkspace));
         }
 
         messageHub.onWorkspaceChanged(function (workspace) {
             if (workspace.data.name === $scope.selectedWorkspace.name)
-                $scope.reloadWorkspace();
+                $scope.reloadProjects();
             if (workspace.data.publish) {
                 if (workspace.data.publish.workspace) {
                     $scope.publish(`/${workspace.data.name}/*`);
@@ -356,16 +460,325 @@ gitProjectsView.controller('ProjectsViewController', [
         });
 
         messageHub.onDidReceiveMessage(
+            'git-projects.push.repository.all',
+            function (msg) {
+                if (msg.data.buttonId === "b1") {
+                    $scope.credentials.username = msg.data.formData[0].value;
+                    $scope.credentials.email = msg.data.formData[1].value;
+                    $scope.credentials.password = msg.data.formData[2].value;
+                    gitApi.pushAllRepositories(
+                        $scope.selectedWorkspace.name,
+                        $scope.credentials.username,
+                        $scope.credentials.email,
+                        $scope.credentials.password,
+                    ).then(function (response) {
+                        console.log(response);
+                        if (response.status !== 200) {
+                            messageHub.showAlertError('Could not push repositories', response.message);
+                        }
+                        messageHub.hideFormDialog('pushGitProjectForm');
+                    });
+                } else messageHub.hideFormDialog('pushGitProjectForm');
+            },
+            true
+        );
+
+        messageHub.onDidReceiveMessage(
+            'git-projects.push.repository',
+            function (msg) {
+                if (msg.data.buttonId === "b1") {
+                    $scope.credentials.username = msg.data.formData[0].value;
+                    $scope.credentials.email = msg.data.formData[1].value;
+                    $scope.credentials.password = msg.data.formData[2].value;
+                    gitApi.pushRepository(
+                        $scope.selectedWorkspace.name,
+                        $scope.selectedRepository,
+                        '',
+                        $scope.credentials.username,
+                        $scope.credentials.email,
+                        $scope.credentials.password,
+                    ).then(function (response) {
+                        console.log(response);
+                        if (response.status !== 200) {
+                            messageHub.showAlertError('Could not push repository', response.message);
+                        }
+                        messageHub.hideFormDialog('pushGitProjectForm');
+                    });
+                } else messageHub.hideFormDialog('pushGitProjectForm');
+            },
+            true
+        );
+
+        messageHub.onDidReceiveMessage(
+            'git-projects.pull.repository.all',
+            function (msg) {
+                if (msg.data.buttonId === "b1") {
+                    $scope.credentials.username = msg.data.formData[0].value;
+                    $scope.credentials.password = msg.data.formData[1].value;
+                    let projects = [];
+                    for (let i = 0; i < $scope.projects.length; i++) {
+                        projects.push($scope.projects[i].text);
+                    }
+                    gitApi.pullRepositories(
+                        $scope.selectedWorkspace.name,
+                        projects,
+                        $scope.credentials.username,
+                        $scope.credentials.password,
+                        function (response) {
+                            if (response.status !== 200) {
+                                messageHub.showAlertError('Could not pull repository', response.message);
+                            }
+                            messageHub.hideFormDialog('pullGitProjectForm');
+                        }
+                    );
+                } else messageHub.hideFormDialog('pullGitProjectForm');
+            },
+            true
+        );
+
+        messageHub.onDidReceiveMessage(
+            'git-projects.pull.repository',
+            function (msg) {
+                if (msg.data.buttonId === "b1") {
+                    $scope.credentials.username = msg.data.formData[0].value;
+                    $scope.credentials.password = msg.data.formData[1].value;
+                    gitApi.pullRepository(
+                        $scope.selectedWorkspace.name,
+                        $scope.selectedRepository,
+                        '',
+                        $scope.credentials.username,
+                        $scope.credentials.password,
+                    ).then(function (response) {
+                        console.log(response);
+                        if (response.status !== 200) {
+                            messageHub.showAlertError('Could not push repository', response.message);
+                        }
+                        messageHub.hideFormDialog('pullGitProjectForm');
+                    });
+                } else messageHub.hideFormDialog('pullGitProjectForm');
+            },
+            true
+        );
+
+        messageHub.onDidReceiveMessage(
+            'git-projects.clone.repository',
+            function (msg) {
+                if (msg.data.buttonId === "b1") {
+                    $scope.credentials.username = msg.data.formData[1].value;
+                    $scope.credentials.password = msg.data.formData[2].value;
+                    gitApi.cloneRepository(
+                        $scope.selectedWorkspace.name,
+                        msg.data.formData[0].value,
+                        msg.data.formData[3].value,
+                        $scope.credentials.username,
+                        $scope.credentials.password,
+                    ).then(function (response) {
+                        if (response.status === 200) {
+                            $scope.reloadProjects();
+                        } else {
+                            messageHub.showAlertError('Could not clone repository', response.message);
+                        }
+                        messageHub.hideFormDialog('cloneGitProjectForm');
+                    });
+                } else messageHub.hideFormDialog('cloneGitProjectForm');
+            },
+            true
+        );
+
+        messageHub.onDidReceiveMessage(
+            'git-projects.share.repository',
+            function (msg) {
+                if (msg.data.buttonId === "b1") {
+                    $scope.credentials.username = msg.data.formData[3].value;
+                    $scope.credentials.email = msg.data.formData[4].value;
+                    $scope.credentials.password = msg.data.formData[5].value;
+                    gitApi.shareProject(
+                        $scope.selectedWorkspace.name,
+                        $scope.selectedRepository,
+                        msg.data.formData[0].value,
+                        msg.data.formData[1].value,
+                        msg.data.formData[2].value,
+                        $scope.credentials.username,
+                        $scope.credentials.password,
+                        $scope.credentials.email,
+                        msg.data.formData[6].value,
+                    ).then(function (response) {
+                        if (response.status === 200) {
+                            $scope.reloadProjects();
+                        } else {
+                            messageHub.showAlertError('Could not share repository', response.message);
+                        }
+                        messageHub.hideFormDialog('shareGitProjectForm');
+                    });
+                } else messageHub.hideFormDialog('shareGitProjectForm');
+            },
+            true
+        );
+
+        messageHub.onDidReceiveMessage(
             'git-projects.tree.contextmenu',
             function (msg) {
-                if (msg.data.itemId === 'showDiff') {
-                    showDiff(msg.data.data);
+                if (msg.data.itemId === 'refresh') {
+                    $scope.reloadProjects()
+                } else if (msg.data.itemId === 'clone') {
+                    $scope.cloneDialog();
+                } else if (msg.data.itemId === 'push') {
+                    $scope.selectedRepository = msg.data.data;
+                    $scope.pushDialog();
+                } else if (msg.data.itemId === 'pull') {
+                    $scope.selectedRepository = msg.data.data;
+                    $scope.pullDialog();
+                } else if (msg.data.itemId === 'reset') {
+                    messageHub.showBusyDialog(
+                        'gitProjectsResetBusyDialog',
+                        'Resetting...',
+                    );
+                    gitApi.resetRepository($scope.selectedWorkspace.name, msg.data.data).then(function (response) {
+                        if (response.status === 200) {
+                            $scope.reloadProjects();
+                        } else {
+                            messageHub.showAlertError('Could not reset repository', response.message);
+                        }
+                        messageHub.hideBusyDialog('gitProjectsResetBusyDialog');
+                    });
+                } else if (msg.data.itemId === 'delete') {
+                    messageHub.showDialogAsync(
+                        `Delete '${msg.data.data.text}'?`,
+                        'This action cannot be undone. It is recommended that you unpublish and delete.',
+                        [{
+                            id: 'b1',
+                            type: 'negative',
+                            label: 'Delete',
+                        },
+                        {
+                            id: 'b2',
+                            type: 'emphasized',
+                            label: 'Delete & Unpublish',
+                        },
+                        {
+                            id: 'b3',
+                            type: 'transparent',
+                            label: 'Cancel',
+                        }],
+                    ).then(function (dialogResponse) {
+                        if (dialogResponse.data !== 'b3') {
+                            let unpublishOnDelete = dialogResponse.data === 'b2';
+                            gitApi.deleteRepository($scope.selectedWorkspace.name, msg.data.data.text, unpublishOnDelete).then(function (response) {
+                                if (response.status === 200) {
+                                    $scope.jstreeWidget.jstree(true).delete_node(msg.data.data);
+                                } else {
+                                    messageHub.showAlertError('Could not delete repository', response.message);
+                                }
+                            });
+                        }
+                    });
+                } else if (msg.data.itemId === 'importProjects') {
+                    messageHub.showDialogAsync(
+                        `Import from '${msg.data.data}'?`,
+                        `Import all projects from '${msg.data.data}'`,
+                        [{
+                            id: 'b1',
+                            type: 'emphasized',
+                            label: 'Import',
+                        },
+                        {
+                            id: 'b2',
+                            type: 'transparent',
+                            label: 'Cancel',
+                        }],
+                    ).then(function (dialogResponse) {
+                        if (dialogResponse.data !== 'b2') {
+                            messageHub.showBusyDialog(
+                                'gitProjectsImportBusyDialog',
+                                'Importing...',
+                            );
+                            gitApi.importProjects($scope.selectedWorkspace.name, msg.data.data).then(function (response) {
+                                if (response.status === 200) {
+                                    messageHub.hideBusyDialog('gitProjectsImportBusyDialog');
+                                    messageHub.showAlertSuccess('Successfully imported project(s)', 'You can now go to Workbench to see the imported project(s).');
+                                } else {
+                                    messageHub.showAlertError('Could not import from repository', response.message);
+                                }
+                            });
+                        }
+                    });
+                } else if (msg.data.itemId === 'share') {
+                    $scope.selectedRepository = msg.data.data;
+                    messageHub.showFormDialog(
+                        'shareGitProjectForm',
+                        `Share '${$scope.selectedRepository}'`,
+                        [{
+                            id: "surli",
+                            type: "input",
+                            label: "Repository HTTPS Url",
+                            inputRules: {
+                                excluded: [],
+                                patterns: ['^https?://'],
+                            },
+                            required: true,
+                            placeholder: "https://github.com/myspace/myproject.git",
+                        },
+                        {
+                            id: "sbi",
+                            type: "input",
+                            label: "Branch",
+                            required: true,
+                            placeholder: "main",
+                        },
+                        {
+                            id: "smi",
+                            type: "input",
+                            label: "Commit message",
+                            required: true,
+                        },
+                        {
+                            id: "suni",
+                            type: "input",
+                            label: "Username",
+                            required: true,
+                            value: $scope.credentials.username,
+                        },
+                        {
+                            id: "sei",
+                            type: "input",
+                            label: "Email",
+                            required: true,
+                            value: $scope.credentials.email,
+                        },
+                        {
+                            id: "spwi",
+                            type: "input",
+                            inputType: 'password',
+                            label: "Password or Token",
+                            required: true,
+                            value: $scope.credentials.password,
+                        },
+                        {
+                            id: "srpc",
+                            type: "checkbox",
+                            label: "Root project",
+                            value: false,
+                        }],
+                        [{
+                            id: 'b1',
+                            type: 'emphasized',
+                            label: 'Share',
+                            whenValid: true,
+                        },
+                        {
+                            id: 'b2',
+                            type: 'transparent',
+                            label: 'Cancel',
+                        }],
+                        'git-projects.share.repository',
+                        'Sharing...',
+                    );
                 }
             },
             true
         );
 
         // Initialization
-        $scope.reloadWorkspace(true);
+        $scope.reloadProjects(true);
         $scope.reloadWorkspaceList();
     }]);
