@@ -140,7 +140,6 @@ gitProjectsView.controller('GitProjectsViewController', [
                 }
                 if (id) {
                     let node = $scope.jstreeWidget.jstree(true).get_node(id);
-                    console.log(node);
                     if (node.type === 'project') {
                         if (node.data.git) {
                             return {
@@ -472,7 +471,6 @@ gitProjectsView.controller('GitProjectsViewController', [
                         $scope.credentials.email,
                         $scope.credentials.password,
                     ).then(function (response) {
-                        console.log(response);
                         if (response.status !== 200) {
                             messageHub.showAlertError('Could not push repositories', response.message);
                         }
@@ -498,7 +496,6 @@ gitProjectsView.controller('GitProjectsViewController', [
                         $scope.credentials.email,
                         $scope.credentials.password,
                     ).then(function (response) {
-                        console.log(response);
                         if (response.status !== 200) {
                             messageHub.showAlertError('Could not push repository', response.message);
                         }
@@ -549,7 +546,6 @@ gitProjectsView.controller('GitProjectsViewController', [
                         $scope.credentials.username,
                         $scope.credentials.password,
                     ).then(function (response) {
-                        console.log(response);
                         if (response.status !== 200) {
                             messageHub.showAlertError('Could not push repository', response.message);
                         }
