@@ -9,19 +9,17 @@
  * SPDX-FileCopyrightText: 2010-2022 SAP SE or an SAP affiliate company and Eclipse Dirigible contributors
  * SPDX-License-Identifier: EPL-2.0
  */
-let gitProjectsView = angular.module('gitProjects', ['ideUI', 'ideView', 'ideWorkspace', 'idePublisher', 'ideGit']);
+let gitProjectsView = angular.module('gitProjects', ['ideUI', 'ideView', 'ideWorkspace', 'ideGit']);
 
 gitProjectsView.controller('GitProjectsViewController', [
     '$scope',
     'messageHub',
     'workspaceApi',
-    'publisherApi',
     'gitApi',
     function (
         $scope,
         messageHub,
         workspaceApi,
-        publisherApi,
         gitApi,
     ) {
         $scope.selectedRepository = '';
@@ -104,14 +102,37 @@ gitProjectsView.controller('GitProjectsViewController', [
             },
         };
 
+        function getProjectNode(parents) {
+            for (let i = 0; i < parents.length; i++) {
+                if (parents[i] !== '#') {
+                    let parent = $scope.jstreeWidget.jstree(true).get_node(parents[i]);
+                    if (parent.type === 'project') {
+                        return parent;
+                    }
+                }
+            }
+        }
+
         $scope.jstreeWidget.on('select_node.jstree', function (event, data) {
-            if (data.event && data.event.type === 'click' && data.node.type === 'file') {
-                messageHub.announceFileSelected({
-                    name: data.node.text,
-                    path: data.node.data.path,
-                    contentType: data.node.data.contentType,
-                    workspace: $scope.selectedWorkspace.name,
-                });
+            if (data.event && data.event.type === 'click') {
+                let project;
+                let isGit = false;
+                if (data.node.type === 'project') {
+                    project = data.node.text;
+                    isGit = data.node.data.git;
+                } else {
+                    projectNode = getProjectNode(data.node.parents);
+                    project = projectNode.text;
+                    isGit = projectNode.data.git;
+                }
+                messageHub.postMessage(
+                    'git.repository.selected',
+                    {
+                        workspace: $scope.selectedWorkspace.name,
+                        project: project,
+                        isGitProject: isGit,
+                    }
+                );
             }
         });
 
