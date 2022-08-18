@@ -22,7 +22,11 @@ gitProjectsView.controller('GitProjectsViewController', [
         workspaceApi,
         gitApi,
     ) {
-        $scope.selectedRepository = '';
+        $scope.selectedRepository = {
+            name: '',
+            fetchUrl: '',
+            pushUrl: '',
+        };
         $scope.credentials = {
             username: '',
             email: '',
@@ -184,6 +188,13 @@ gitProjectsView.controller('GitProjectsViewController', [
                                     data: node.text,
                                 },
                                 {
+                                    id: "editUrls",
+                                    label: "Edit URLs",
+                                    divider: true,
+                                    icon: "sap-icon--edit",
+                                    data: node.text,
+                                },
+                                {
                                     id: "importProjects",
                                     label: "Import Project(s)",
                                     divider: true,
@@ -328,7 +339,7 @@ gitProjectsView.controller('GitProjectsViewController', [
         $scope.pushDialog = function (multiple = false) {
             messageHub.showFormDialog(
                 'pushGitProjectForm',
-                (multiple ? 'Push all repositories' : `Push '${$scope.selectedRepository}'`),
+                (multiple ? 'Push all repositories' : `Push '${$scope.selectedRepository.name}'`),
                 [{
                     id: "puni",
                     type: "input",
@@ -370,7 +381,7 @@ gitProjectsView.controller('GitProjectsViewController', [
         $scope.pullDialog = function (multiple = false) {
             messageHub.showFormDialog(
                 'pullGitProjectForm',
-                (multiple ? 'Pull all repositories' : `Pull '${$scope.selectedRepository}'`),
+                (multiple ? 'Pull all repositories' : `Pull '${$scope.selectedRepository.name}'`),
                 [{
                     id: "puni",
                     type: "input",
@@ -511,7 +522,7 @@ gitProjectsView.controller('GitProjectsViewController', [
                     $scope.credentials.password = msg.data.formData[2].value;
                     gitApi.pushRepository(
                         $scope.selectedWorkspace.name,
-                        $scope.selectedRepository,
+                        $scope.selectedRepository.name,
                         '',
                         $scope.credentials.username,
                         $scope.credentials.email,
@@ -562,7 +573,7 @@ gitProjectsView.controller('GitProjectsViewController', [
                     $scope.credentials.password = msg.data.formData[1].value;
                     gitApi.pullRepository(
                         $scope.selectedWorkspace.name,
-                        $scope.selectedRepository,
+                        $scope.selectedRepository.name,
                         '',
                         $scope.credentials.username,
                         $scope.credentials.password,
@@ -611,7 +622,7 @@ gitProjectsView.controller('GitProjectsViewController', [
                     $scope.credentials.password = msg.data.formData[5].value;
                     gitApi.shareProject(
                         $scope.selectedWorkspace.name,
-                        $scope.selectedRepository,
+                        $scope.selectedRepository.name,
                         msg.data.formData[0].value,
                         msg.data.formData[1].value,
                         msg.data.formData[2].value,
@@ -620,14 +631,43 @@ gitProjectsView.controller('GitProjectsViewController', [
                         $scope.credentials.email,
                         msg.data.formData[6].value,
                     ).then(function (response) {
-                        if (response.status === 200) {
-                            $scope.reloadProjects();
-                        } else {
-                            messageHub.showAlertError('Could not share repository', response.message);
-                        }
+                        if (response.status === 200) $scope.reloadProjects();
+                        else messageHub.showAlertError('Could not share repository', response.message);
                         messageHub.hideFormDialog('shareGitProjectForm');
                     });
                 } else messageHub.hideFormDialog('shareGitProjectForm');
+            },
+            true
+        );
+
+        messageHub.onDidReceiveMessage(
+            'git-projects.edit.repository',
+            function (msg) {
+                if (msg.data.buttonId === "b1") {
+                    if ($scope.selectedRepository.fetchUrl !== msg.data.formData[0].value) {
+                        gitApi.setFetchUrl(
+                            $scope.selectedWorkspace.name,
+                            $scope.selectedRepository.name,
+                            msg.data.formData[0].value
+                        ).then(function (response) {
+                            if (response.status !== 200) {
+                                messageHub.showAlertError('Could not change fetch url', response.message);
+                            } else messageHub.setStatusMessage('Successfully changed fetch url');
+                        })
+                    }
+                    if ($scope.selectedRepository.pushUrl !== msg.data.formData[1].value) {
+                        gitApi.setPushUrl(
+                            $scope.selectedWorkspace.name,
+                            $scope.selectedRepository.name,
+                            msg.data.formData[1].value
+                        ).then(function (response) {
+                            if (response.status !== 200) {
+                                messageHub.showAlertError('Could not change push url', response.message);
+                            } else messageHub.setStatusMessage('Successfully changed push url');
+                        })
+                    }
+                    messageHub.hideFormDialog('editUrlsGitProjectForm');
+                } else messageHub.hideFormDialog('editUrlsGitProjectForm');
             },
             true
         );
@@ -640,10 +680,10 @@ gitProjectsView.controller('GitProjectsViewController', [
                 } else if (msg.data.itemId === 'clone') {
                     $scope.cloneDialog();
                 } else if (msg.data.itemId === 'push') {
-                    $scope.selectedRepository = msg.data.data;
+                    $scope.selectedRepository.name = msg.data.data;
                     $scope.pushDialog();
                 } else if (msg.data.itemId === 'pull') {
-                    $scope.selectedRepository = msg.data.data;
+                    $scope.selectedRepository.name = msg.data.data;
                     $scope.pullDialog();
                 } else if (msg.data.itemId === 'reset') {
                     messageHub.showBusyDialog(
@@ -720,10 +760,10 @@ gitProjectsView.controller('GitProjectsViewController', [
                         }
                     });
                 } else if (msg.data.itemId === 'share') {
-                    $scope.selectedRepository = msg.data.data;
+                    $scope.selectedRepository.name = msg.data.data;
                     messageHub.showFormDialog(
                         'shareGitProjectForm',
-                        `Share '${$scope.selectedRepository}'`,
+                        `Share '${$scope.selectedRepository.name}'`,
                         [{
                             id: "surli",
                             type: "input",
@@ -790,6 +830,55 @@ gitProjectsView.controller('GitProjectsViewController', [
                         'git-projects.share.repository',
                         'Sharing...',
                     );
+                } else if (msg.data.itemId === 'editUrls') {
+                    $scope.selectedRepository.name = msg.data.data;
+                    gitApi.getOriginUrls($scope.selectedWorkspace.name, $scope.selectedRepository.name).then(function (response) {
+                        if (response.status === 200) {
+                            $scope.selectedRepository.fetchUrl = response.data.fetchUrl;
+                            $scope.selectedRepository.pushUrl = response.data.pushUrl;
+                            messageHub.showFormDialog(
+                                'editUrlsGitProjectForm',
+                                'Edit Origin Urls',
+                                [{
+                                    id: 'furli',
+                                    type: 'input',
+                                    label: 'Fetch HTTPS Url',
+                                    inputRules: {
+                                        excluded: [],
+                                        patterns: ['^https?://'],
+                                    },
+                                    required: true,
+                                    placeholder: 'https://github.com/myspace/myproject.git',
+                                    value: response.data.fetchUrl,
+                                },
+                                {
+                                    id: 'purli',
+                                    type: 'input',
+                                    label: 'Push HTTPS Url',
+                                    inputRules: {
+                                        excluded: [],
+                                        patterns: ['^https?://'],
+                                    },
+                                    required: true,
+                                    placeholder: 'https://github.com/myspace/myproject.git',
+                                    value: response.data.pushUrl,
+                                }],
+                                [{
+                                    id: 'b1',
+                                    type: 'emphasized',
+                                    label: 'Save',
+                                    whenValid: true,
+                                },
+                                {
+                                    id: 'b2',
+                                    type: 'transparent',
+                                    label: 'Cancel',
+                                }],
+                                'git-projects.edit.repository',
+                                'Changing...',
+                            );
+                        } else messageHub.showAlertError('Could not get origin urls', response.message);
+                    });
                 }
             },
             true
